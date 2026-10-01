@@ -45,6 +45,9 @@ class CourseController(private val courseService: CourseService) {
         @RequestHeader(value = "X-Actor", required = false) actor: String?
     ) = courseService.teacherLeaveLesson(id, req["reason"] ?: "老师临时请假", resolveActor(role, actor))
 
+    @GetMapping("/lessons/{id}")
+    fun getLesson(@PathVariable id: Long) = courseService.getLesson(id)
+
     @GetMapping("/contracts/{contractId}/consumption")
     fun consumption(@PathVariable contractId: Long): Any {
         val (paid, gift) = courseService.consumptionOf(contractId)
@@ -140,6 +143,8 @@ class RefundController(private val refundService: RefundService) {
     ) = refundService.request(
         (req["studentId"] as Number).toLong(),
         req["reason"] as? String ?: "",
+        (req["reasonCategory"] as? String)?.let { com.training.crm.domain.RefundReasonCategory.valueOf(it) }
+            ?: com.training.crm.domain.RefundReasonCategory.OTHER,
         idemKey,
         resolveActor(role, actor)
     )
@@ -159,8 +164,22 @@ class RefundController(private val refundService: RefundService) {
         @RequestHeader(value = "X-Actor", required = false) actor: String?
     ) = refundService.reject(id, resolveActor(role, actor), req["reason"] ?: "")
 
+    /** 校区提交整改说明（退费源于服务承诺不一致时必办） */
+    @PostMapping("/{id}/rectification")
+    fun submitRectification(
+        @PathVariable id: Long,
+        @RequestBody req: Map<String, String>,
+        @RequestHeader("X-Role") role: String,
+        @RequestHeader(value = "X-Actor", required = false) actor: String?
+    ) = refundService.submitRectification(id, req["content"] ?: "", resolveActor(role, actor))
+
+    /** 待提交的校区整改任务 */
+    @GetMapping("/rectifications/pending")
+    fun pendingRectifications() = refundService.pendingRectifications()
+
+    /** 退费单详情：单据 + 计算明细 + 校区整改情况 */
     @GetMapping("/{id}")
-    fun get(@PathVariable id: Long) = refundService.get(id)
+    fun get(@PathVariable id: Long) = refundService.detail(id)
 }
 
 @RestController

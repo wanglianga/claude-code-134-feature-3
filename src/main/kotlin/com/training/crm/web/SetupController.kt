@@ -16,7 +16,8 @@ class SetupController(
     private val teacherAvailabilityRepo: TeacherAvailabilityRepo,
     private val consultantRepo: ConsultantRepo,
     private val coursePackageRepo: CoursePackageRepo,
-    private val clazzRepo: ClazzRepo
+    private val clazzRepo: ClazzRepo,
+    private val materialStockRepo: MaterialStockRepo
 ) {
     @PostMapping("/campuses")
     fun createCampus(@RequestBody req: Campus) = campusRepo.save(req)
@@ -55,6 +56,10 @@ class SetupController(
 
     @GetMapping("/classes")
     fun classes() = clazzRepo.findAll()
+
+    /** 教材库存：按校区 + 教材版本 */
+    @GetMapping("/material-stock")
+    fun materialStock() = materialStockRepo.findAll()
 }
 
 data class AvailabilityReq(val dayOfWeek: Int, val startTime: LocalTime, val endTime: LocalTime)

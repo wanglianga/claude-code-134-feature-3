@@ -62,6 +62,8 @@ class Contract(
     var giftLessons: Int = 0,
     var materialFee: BigDecimal = BigDecimal.ZERO,
     var materialsDelivered: Boolean = false,
+    /** 分期手续费：分期数>1 时按实付金额×费率计收，退费时不予退还（从应退中扣除） */
+    var installmentFee: BigDecimal = BigDecimal.ZERO,
     @Enumerated(EnumType.STRING)
     var consumeOrder: ConsumeOrder = ConsumeOrder.PAID_FIRST,
     /** 报名时一致性校验告警（试听反馈 vs 合同承诺），JSON 数组文本 */
@@ -111,4 +113,14 @@ class Commission(
     @Enumerated(EnumType.STRING)
     var status: CommissionStatus = CommissionStatus.ACCRUED,
     var updatedAt: LocalDateTime = LocalDateTime.now()
+)
+
+/** 教材库存：按校区 + 教材版本维护；报名发放出库，退费完成回收入库 */
+@Entity
+class MaterialStock(
+    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
+    var id: Long = 0,
+    var campusId: Long = 0,
+    var textbookVersion: String = "",
+    var quantity: Int = 0
 )

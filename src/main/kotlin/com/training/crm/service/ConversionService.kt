@@ -25,8 +25,10 @@ class ConversionService(
     private val trialFeedbackRepo: TrialFeedbackRepo,
     private val promiseRecordRepo: PromiseRecordRepo,
     private val channelFeeRepo: ChannelFeeRepo,
+    private val materialStockRepo: MaterialStockRepo,
     private val auditService: AuditService,
-    @Value("\${app.commission-rate}") private val commissionRate: BigDecimal
+    @Value("\${app.commission-rate}") private val commissionRate: BigDecimal,
+    @Value("\${app.installment-fee-rate}") private val installmentFeeRate: BigDecimal
 ) {
     private val mapper = jacksonObjectMapper()
 
@@ -64,6 +66,10 @@ class ConversionService(
         val finalAmount = pkg.price.subtract(req.discountAmount)
         if (finalAmount < BigDecimal.ZERO) bizFail("INVALID_AMOUNT", "优惠金额不能超过课包价格")
         val giftLessons = pkg.defaultGiftLessons + req.extraGiftLessons
+        // 分期手续费：分期数>1 时按实付金额×费率计收（报名时一次性计入合同，退费时不退）
+        val plan = req.installments.ifEmpty { listOf(InstallmentPlan(finalAmount, LocalDate.now())) }
+        val installmentFee =
+            if (plan.size > 1) finalAmount.multiply(installmentFeeRate) else BigDecimal.ZERO
         val contract = contractRepo.save(
             Contract(
                 studentId = student.id,
@@ -77,13 +83,13 @@ class ConversionService(
                 giftLessons = giftLessons,
                 materialFee = pkg.materialFee,
                 materialsDelivered = req.materialsDelivered,
+                installmentFee = installmentFee,
                 consumeOrder = req.consumeOrder,
                 consistencyWarnings = if (warnings.isEmpty()) null else mapper.writeValueAsString(warnings)
             )
         )
 
         // ---- 分期 ----
-        val plan = req.installments.ifEmpty { listOf(InstallmentPlan(finalAmount, LocalDate.now())) }
         val planSum = plan.fold(BigDecimal.ZERO) { acc, p -> acc.add(p.amount) }
         if (planSum.compareTo(finalAmount) != 0) {
             bizFail("INVALID_INSTALLMENT", "分期总额($planSum)必须等于实付金额($finalAmount)")
@@ -112,13 +118,33 @@ class ConversionService(
         // ---- 渠道费结算 ----
         channelFeeRepo.findByLeadId(lead.id).forEach { it.settled = true; channelFeeRepo.save(it) }
 
+        // ---- 教材出库：已发放教材则扣减校区教材库存 ----
+        if (req.materialsDelivered) {
+            val stock = materialStockRepo.findByCampusIdAndTextbookVersion(lead.campusId, pkg.textbookVersion)
+            if (stock == null || stock.quantity <= 0) {
+                auditService.record(
+                    "MATERIAL_STOCK_SHORTAGE",
+                    "教材库存不足：${pkg.textbookVersion}（校区#${lead.campusId}），教材仍标记已发放，请尽快补货",
+                    studentId = student.id, leadId = lead.id, actor = actor
+                )
+            } else {
+                stock.quantity -= 1
+                materialStockRepo.save(stock)
+                auditService.record(
+                    "MATERIAL_OUTBOUND",
+                    "教材出库：${pkg.textbookVersion}（校区#${lead.campusId}），剩余库存=${stock.quantity}",
+                    studentId = student.id, leadId = lead.id, actor = actor
+                )
+            }
+        }
+
         lead.status = LeadStatus.CONVERTED
         leadRepo.save(lead)
 
         auditService.record("CONVERTED", "线索转化为正式学员（学员ID=${student.id}）", studentId = student.id, leadId = lead.id, actor = actor)
         auditService.record(
             "CONTRACT_CREATED",
-            "合同#${contract.id}：课包=${pkg.name}，原价=${pkg.price}，优惠=${req.discountAmount}，实付=$finalAmount，付费课时=${pkg.totalLessons}，赠课=$giftLessons，教材费=${pkg.materialFee}，课消顺序=${req.consumeOrder}",
+            "合同#${contract.id}：课包=${pkg.name}，原价=${pkg.price}，优惠=${req.discountAmount}，实付=$finalAmount，付费课时=${pkg.totalLessons}，赠课=$giftLessons，教材费=${pkg.materialFee}，分期手续费=$installmentFee，课消顺序=${req.consumeOrder}",
             studentId = student.id, leadId = lead.id, actor = actor
         )
         auditService.record("INSTALLMENT_PLAN", "分期${installments.size}期：${installments.joinToString { "第${it.seq}期¥${it.amount}(${it.dueDate})" }}", studentId = student.id, leadId = lead.id, actor = actor)

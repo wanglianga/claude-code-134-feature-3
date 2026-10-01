@@ -95,21 +95,41 @@ class PrincipalService(
         }
         val perConsultant = consultantRepo.findAll().map { c ->
             val commissions = commissionRepo.findByConsultantId(c.id)
+            // 责任退费：审批后归因为顾问责任的退费单
+            val responsibleRefunds = refundOrderRepo.findAll().filter { r ->
+                r.status == RefundStatus.PAID && r.attribution == RefundAttribution.CONSULTANT &&
+                    contractRepo.findById(r.contractId).map { it.consultantId == c.id }.orElse(false)
+            }
             mapOf(
                 "consultant" to c.name,
                 "leads" to leads.count { it.consultantId == c.id },
                 "converted" to leads.count { it.consultantId == c.id && it.status == LeadStatus.CONVERTED },
                 "commissionAccrued" to commissions.filter { it.status == CommissionStatus.ACCRUED }.fold(BigDecimal.ZERO) { a, x -> a.add(x.amount) },
                 "commissionFrozen" to commissions.filter { it.status == CommissionStatus.FROZEN }.fold(BigDecimal.ZERO) { a, x -> a.add(x.amount) },
-                "commissionClawedBack" to commissions.filter { it.status == CommissionStatus.CLAWED_BACK }.fold(BigDecimal.ZERO) { a, x -> a.add(x.amount) }
+                "commissionClawedBack" to commissions.filter { it.status == CommissionStatus.CLAWED_BACK }.fold(BigDecimal.ZERO) { a, x -> a.add(x.amount) },
+                "responsibleRefunds" to responsibleRefunds.size,
+                "responsibleRefundAmount" to responsibleRefunds.fold(BigDecimal.ZERO) { a, r -> a.add(r.refundAmount) }
             )
         }
+        // 渠道投放质量：退费失效线索不再计为有效报名，防止同一线索被重复计算
+        val channelQuality = leads.groupBy { it.sourceChannel }.map { (channel, ls) ->
+            val valid = ls.count { it.status == LeadStatus.CONVERTED }
+            val invalid = ls.count { it.status == LeadStatus.REFUNDED }
+            channel to mapOf(
+                "leads" to ls.size,
+                "validConversions" to valid,
+                "invalidRefunds" to invalid,
+                "validRate" to BigDecimal(valid).divide(BigDecimal(ls.size), 4, java.math.RoundingMode.HALF_UP),
+                "cost" to ls.flatMap { channelFeeRepo.findByLeadId(it.id) }.fold(BigDecimal.ZERO) { a, f -> a.add(f.amount) }
+            )
+        }.toMap()
         return mapOf(
             "campuses" to perCampus,
             "consultants" to perConsultant,
             "channelCosts" to leads.flatMap { channelFeeRepo.findByLeadId(it.id) }
                 .groupBy { it.channel }
-                .mapValues { entry -> entry.value.fold(BigDecimal.ZERO) { a, f -> a.add(f.amount) } }
+                .mapValues { entry -> entry.value.fold(BigDecimal.ZERO) { a, f -> a.add(f.amount) } },
+            "channelQuality" to channelQuality
         )
     }
 }

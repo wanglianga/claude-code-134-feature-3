@@ -57,6 +57,13 @@ interface CommissionRepo : JpaRepository<Commission, Long> {
     fun findByContractId(contractId: Long): List<Commission>
     fun findByConsultantId(consultantId: Long): List<Commission>
 }
+interface MaterialStockRepo : JpaRepository<MaterialStock, Long> {
+    fun findByCampusIdAndTextbookVersion(campusId: Long, textbookVersion: String): MaterialStock?
+}
+interface RectificationReportRepo : JpaRepository<RectificationReport, Long> {
+    fun findByRefundOrderId(refundOrderId: Long): List<RectificationReport>
+    fun findByStatus(status: String): List<RectificationReport>
+}
 
 interface ClazzRepo : JpaRepository<Clazz, Long>
 interface EnrollmentRepo : JpaRepository<Enrollment, Long> {

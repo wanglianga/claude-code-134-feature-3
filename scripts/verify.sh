@@ -138,18 +138,19 @@ check "停课状态" "$(get /api/principal/students/$STU_A/timeline PRINCIPAL | 
 post /api/students/$STU_A/resume CONSULTANT '{}' -H "X-Actor: 王顾问" > /dev/null
 check "复课状态" "$(get /api/principal/students/$STU_A/timeline PRINCIPAL | jq -r '.student.status')" "ACTIVE"
 
-echo "== 5. 退费（投诉赔付 + 优惠回收 + 教材费 + 提成冻结）=="
+echo "== 5. 退费（投诉赔付 + 优惠回收 + 教材费 + 分期手续费 + 提成冻结）=="
 post /api/students/$STU_A/complaints CONSULTANT '{"content":"家长投诉换老师未提前通知"}' -H "X-Actor: 王顾问" > /dev/null
 PV=$(get /api/refunds/preview/$STU_A ADMIN)
-# 已上2课时，单价=9000/48=187.5，基础退费=46*187.5=8625；教材费-300；优惠回收-600；投诉赔付+200 → 7925
+# 已上2课时，单价=9000/48=187.5，基础退费=46*187.5=8625；教材费-300；优惠回收-600；分期手续费-180(9000×2%)；投诉赔付+200 → 7745
 check "试算：已上付费课时=2" "$(echo "$PV" | jq -r '.consumedPaidLessons')" "2"
 check "试算：课时单价=187.5" "$(echo "$PV" | jq -r '.unitPrice')" "187.5"
 check "试算：基础退费=8625" "$(echo "$PV" | jq -r '.baseRefund')" "8625"
 check "试算：教材费扣300" "$(echo "$PV" | jq -r '.materialFeeDeducted')" "300"
 check "试算：优惠回收600" "$(echo "$PV" | jq -r '.discountRecovered')" "600"
+check "试算：分期手续费扣180" "$(echo "$PV" | jq -r '.installmentFeeDeducted')" "180"
 check "试算：投诉赔付+200" "$(echo "$PV" | jq -r '.complaintCompensation')" "200"
 check "试算：提成冻结450" "$(echo "$PV" | jq -r '.commissionFrozen')" "450"
-check "试算：应退=7925" "$(echo "$PV" | jq -r '.refundAmount')" "7925"
+check "试算：应退=7745" "$(echo "$PV" | jq -r '.refundAmount')" "7745"
 
 RQ=$(post /api/refunds CONSULTANT "{\"studentId\":$STU_A,\"reason\":\"家长对服务不满意\"}" -H "X-Actor: 王顾问" -H "X-Idempotency-Key: refund-xm-001")
 RF_A=$(echo "$RQ" | jq -r '.id')
@@ -159,7 +160,7 @@ check "退费申请幂等(同一单据)" "$(echo "$RQ2" | jq -r '.id')" "$RF_A"
 post /api/refunds/$RF_A/approve PRINCIPAL '{}' -H "X-Actor: 校长" > /dev/null
 RF=$(get /api/refunds/$RF_A ADMIN)
 check "退费已打款" "$(echo "$RF" | jq -r '.status')" "PAID"
-check "退费金额=7925" "$(echo "$RF" | jq -r '.refundAmount')" "7925"
+check "退费金额=7745" "$(echo "$RF" | jq -r '.refundAmount')" "7745"
 TL_A=$(get /api/principal/students/$STU_A/timeline PRINCIPAL)
 check "退费后学员状态" "$(echo "$TL_A" | jq -r '.student.status')" "REFUNDED"
 check "合同状态=REFUNDED" "$(echo "$TL_A" | jq -r '.contracts[0].status')" "REFUNDED"
@@ -218,6 +219,91 @@ check "轨迹含渠道费(抖音300)" "$(echo "$TL_A" | jq -r '.channelFees[0].a
 OV=$(get /api/principal/overview PRINCIPAL)
 check "概览含2个校区" "$(echo "$OV" | jq -r '.campuses | length')" "2"
 check_true "概览含渠道成本" "$(echo "$OV" | jq -r '.channelCosts["抖音"]')"
+
+echo "== 9. 退费扩展：分期手续费/业绩归因/校区整改/名额释放/排课减少/教材回收/渠道质量 =="
+STOCK0=$(get /api/setup/material-stock ADMIN | jq -r '[.[] | select(.campusId==1 and .textbookVersion=="人教版数学")][0].quantity')
+LEAD_D=$(post /api/leads CONSULTANT '{"studentName":"小华","parentPhone":"13744444444","grade":"五年级","subject":"MATH","baseLevel":"INTERMEDIATE","availableTime":"周日下午","sourceChannel":"小红书","consultantId":1,"campusId":1}' -H "X-Actor: 王顾问" | jq -r '.lead.id')
+TRIAL_D=$(post /api/trials/book CONSULTANT "{\"leadId\":$LEAD_D,\"startTime\":\"${SUN}T17:00:00\",\"endTime\":\"${SUN}T18:00:00\"}" -H "X-Actor: 王顾问" | jq -r '.id')
+post /api/trials/$TRIAL_D/attend CONSULTANT '{}' -H "X-Actor: 王顾问" > /dev/null
+post /api/trials/$TRIAL_D/feedback TEACHER '{"performance":"思维活跃，冲刺潜力大","assessmentScore":90,"suitableClassType":"REGULAR","suggestedLevel":"INTERMEDIATE"}' -H "X-Actor: 张老师" > /dev/null
+# 优惠1200 → 实付8400；2期分期 → 分期手续费=8400×2%=168；教材发放出库
+CONV_D=$(post /api/conversions CONSULTANT "{\"leadId\":$LEAD_D,\"coursePackageId\":1,\"discountAmount\":1200,\"installments\":[{\"amount\":4200,\"dueDate\":\"$SAT\"},{\"amount\":4200,\"dueDate\":\"$SAT2\"}],\"materialsDelivered\":true}" -H "X-Actor: 王顾问")
+STU_D=$(echo "$CONV_D" | jq -r '.student.id'); CT_D=$(echo "$CONV_D" | jq -r '.contract.id')
+check "无告警直接转化(小华)" "$(echo "$CONV_D" | jq -r '.consistencyWarnings | length')" "0"
+check "合同分期手续费=168" "$(echo "$CONV_D" | jq -r '.contract.installmentFee == 168')" "true"
+STOCK1=$(get /api/setup/material-stock ADMIN | jq -r '[.[] | select(.campusId==1 and .textbookVersion=="人教版数学")][0].quantity')
+check "教材出库：库存-1" "$([ "$STOCK1" -eq "$((STOCK0-1))" ] && echo ok)" "ok"
+for IID in $(echo "$CONV_D" | jq -r '.installments[].id'); do
+  post /api/conversions/installments/$IID/pay CONSULTANT '{}' -H "X-Actor: 王顾问" > /dev/null
+done
+
+# 1对1冲刺班（容量1）：上2节课，另排2节未上
+post /api/setup/classes ADMIN '{"name":"数学1对1冲刺班","campusId":1,"subject":"MATH","level":"INTERMEDIATE","classType":"ONE_ON_ONE","teacherId":1,"classroomId":2,"capacity":1,"textbookVersion":"人教版数学","scheduleDesc":"预约制"}' > /dev/null
+EN_D=$(post /api/courses/classes/4/enroll CONSULTANT "{\"studentId\":$STU_D,\"contractId\":$CT_D}" -H "X-Actor: 王顾问")
+check "小华入班1对1" "$(echo "$EN_D" | jq -r '.status')" "ACTIVE"
+LD1=$(post /api/courses/lessons ADMIN "{\"clazzId\":4,\"startTime\":\"${SAT3}T18:00:00\",\"endTime\":\"${SAT3}T19:00:00\",\"topic\":\"冲刺专题1\"}" -H "X-Actor: 教务" | jq -r '.id')
+LD2=$(post /api/courses/lessons ADMIN "{\"clazzId\":4,\"startTime\":\"${SAT3}T19:00:00\",\"endTime\":\"${SAT3}T20:00:00\",\"topic\":\"冲刺专题2\"}" -H "X-Actor: 教务" | jq -r '.id')
+LD3=$(post /api/courses/lessons ADMIN "{\"clazzId\":4,\"startTime\":\"${SAT3}T20:00:00\",\"endTime\":\"${SAT3}T21:00:00\",\"topic\":\"冲刺专题3\"}" -H "X-Actor: 教务" | jq -r '.id')
+LD4=$(post /api/courses/lessons ADMIN "{\"clazzId\":4,\"startTime\":\"${SAT2}T18:00:00\",\"endTime\":\"${SAT2}T19:00:00\",\"topic\":\"冲刺专题4\"}" -H "X-Actor: 教务" | jq -r '.id')
+post /api/courses/lessons/$LD1/complete TEACHER '{}' -H "X-Actor: 张老师" > /dev/null
+post /api/courses/lessons/$LD2/complete TEACHER '{}' -H "X-Actor: 张老师" > /dev/null
+
+# 试算：已上2课时，单价=8400/48=175，基础退费=46×175=8050；教材-300；优惠回收-1200；分期手续费-168 → 6382
+PV_D=$(get /api/refunds/preview/$STU_D ADMIN)
+check "小华试算：基础退费=8050" "$(echo "$PV_D" | jq -r '.baseRefund == 8050')" "true"
+check "小华试算：优惠回收=1200" "$(echo "$PV_D" | jq -r '.discountRecovered == 1200')" "true"
+check "小华试算：分期手续费=168" "$(echo "$PV_D" | jq -r '.installmentFeeDeducted == 168')" "true"
+check "小华试算：应退=6382" "$(echo "$PV_D" | jq -r '.refundAmount == 6382')" "true"
+check "小华试算：含报名天数" "$(echo "$PV_D" | jq -r '.daysSinceSign >= 0')" "true"
+
+# 承诺不一致退费：申请即冻结提成
+RQ_D=$(post /api/refunds CONSULTANT "{\"studentId\":$STU_D,\"reason\":\"顾问承诺保分未兑现\",\"reasonCategory\":\"PROMISE_MISMATCH\"}" -H "X-Actor: 王顾问")
+RF_D=$(echo "$RQ_D" | jq -r '.id')
+check "小华退费申请创建" "$(echo "$RQ_D" | jq -r '.status')" "REQUESTED"
+check "申请后提成冻结420" "$(get /api/principal/overview PRINCIPAL | jq -r '[.consultants[] | select(.consultant=="王顾问")][0].commissionFrozen == 420')" "true"
+
+# 财务审核通过：归因/整改/名额/排课/教材/渠道全联动
+post /api/refunds/$RF_D/approve PRINCIPAL '{}' -H "X-Actor: 校长" > /dev/null
+RD=$(get /api/refunds/$RF_D ADMIN)
+check "退费单详情：PAID" "$(echo "$RD" | jq -r '.status')" "PAID"
+check "退费单详情：应退6382" "$(echo "$RD" | jq -r '.refundAmount == 6382')" "true"
+check "退费单详情：归因顾问责任" "$(echo "$RD" | jq -r '.attribution')" "CONSULTANT"
+check "退费单详情：原因分类" "$(echo "$RD" | jq -r '.reasonCategory')" "PROMISE_MISMATCH"
+check "退费单详情：整改待提交" "$(echo "$RD" | jq -r '.rectification.status')" "PENDING"
+check "退费单详情：明细含手续费" "$(echo "$RD" | jq -r '.breakdown.installmentFeeDeducted == 168')" "true"
+check "待整改任务=1" "$(get /api/refunds/rectifications/pending ADMIN | jq -r 'length')" "1"
+check "未上课时3已取消" "$(get /api/courses/lessons/$LD3 ADMIN | jq -r '.status')" "CANCELLED"
+check "未上课时4已取消" "$(get /api/courses/lessons/$LD4 ADMIN | jq -r '.status')" "CANCELLED"
+check "已上课时保留" "$(get /api/courses/lessons/$LD1 ADMIN | jq -r '.status')" "COMPLETED"
+STOCK2=$(get /api/setup/material-stock ADMIN | jq -r '[.[] | select(.campusId==1 and .textbookVersion=="人教版数学")][0].quantity')
+check "教材回收：库存恢复" "$([ "$STOCK2" -eq "$STOCK0" ] && echo ok)" "ok"
+TL_D=$(get /api/principal/students/$STU_D/timeline PRINCIPAL)
+check "线索标记退费失效" "$(echo "$TL_D" | jq -r '.lead.status')" "REFUNDED"
+check "渠道费已反结算" "$(echo "$TL_D" | jq -r '.channelFees[0].settled')" "false"
+check "报班记录已退出" "$(echo "$TL_D" | jq -r '.enrollments[0].status')" "DROPPED"
+EV_D=$(echo "$TL_D" | jq -r '[.events[].type] | unique | join(",")')
+for E in MATERIAL_OUTBOUND REFUND_REQUESTED COMMISSION_FROZEN CLASS_SEAT_RELEASED LESSON_CANCELLED_REFUND REFUND_PAID COMMISSION_CLAWED_BACK REFUND_ATTRIBUTED RECTIFICATION_REQUIRED MATERIAL_RESTOCKED LEAD_INVALIDATED CHANNEL_FEE_REVERSED; do
+  check_true "小华轨迹含事件 $E" "$(echo "$EV_D" | grep -o "$E")"
+done
+
+# 校区提交整改说明
+RECT=$(post /api/refunds/$RF_D/rectification ADMIN '{"content":"已整改：规范顾问承诺话术，全员培训并抽查录音"}' -H "X-Actor: 中关村校区")
+check "整改说明提交成功" "$(echo "$RECT" | jq -r '.status')" "SUBMITTED"
+check "整改后详情已提交" "$(get /api/refunds/$RF_D ADMIN | jq -r '.rectification.status')" "SUBMITTED"
+DUP=$(post /api/refunds/$RF_D/rectification ADMIN '{"content":"重复提交"}' -H "X-Actor: 中关村校区")
+check "重复提交整改被拦截" "$(echo "$DUP" | jq -r '.error')" "DUPLICATE"
+check "待整改任务清零" "$(get /api/refunds/rectifications/pending ADMIN | jq -r 'length')" "0"
+
+# 经营概览：顾问责任退费 + 渠道投放质量
+OV9=$(get /api/principal/overview PRINCIPAL)
+check "王顾问责任退费1单" "$(echo "$OV9" | jq -r '[.consultants[] | select(.consultant=="王顾问")][0].responsibleRefunds')" "1"
+check "王顾问责任退费6382" "$(echo "$OV9" | jq -r '[.consultants[] | select(.consultant=="王顾问")][0].responsibleRefundAmount == 6382')" "true"
+check "小红书无效报名1" "$(echo "$OV9" | jq -r '.channelQuality["小红书"].invalidRefunds')" "1"
+check "小红书有效报名0" "$(echo "$OV9" | jq -r '.channelQuality["小红书"].validConversions')" "0"
+
+# 班级名额释放：容量1的1对1班可再入小刚
+EN_C2=$(post /api/courses/classes/4/enroll CONSULTANT "{\"studentId\":$STU_C,\"contractId\":$CT_C}" -H "X-Actor: 王顾问")
+check "名额释放后小刚可入班" "$(echo "$EN_C2" | jq -r '.status')" "ACTIVE"
 
 echo ""
 echo "==================================="

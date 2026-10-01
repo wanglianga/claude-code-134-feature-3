@@ -9,8 +9,8 @@ enum class Level { BEGINNER, BASIC, INTERMEDIATE, ADVANCED }
 /** 班型 */
 enum class ClassType { REGULAR, INTENSIVE, ONE_ON_ONE, SPRINT }
 
-/** 线索状态：新建 → 已约试听 → 试听完成 → 已转化 / 已流失 */
-enum class LeadStatus { NEW, TRIAL_SCHEDULED, TRIAL_DONE, CONVERTED, LOST }
+/** 线索状态：新建 → 已约试听 → 试听完成 → 已转化 / 已流失；退费完成后置为「退费失效」，不再计入有效报名 */
+enum class LeadStatus { NEW, TRIAL_SCHEDULED, TRIAL_DONE, CONVERTED, LOST, REFUNDED }
 
 /** 试听课状态 */
 enum class TrialStatus { SCHEDULED, ATTENDED, ABSENT, CANCELLED_TEACHER_LEAVE, CANCELLED }
@@ -44,6 +44,16 @@ enum class CommissionStatus { ACCRUED, FROZEN, CLAWED_BACK, SETTLED }
 
 /** 退费单状态 */
 enum class RefundStatus { REQUESTED, APPROVED, REJECTED, PAID }
+
+/**
+ * 退费原因分类：决定顾问业绩重新归因与是否触发校区整改。
+ * PERSONAL=家长个人原因；SERVICE_QUALITY=服务质量不满意；PROMISE_MISMATCH=服务承诺不一致；
+ * TEACHER_ISSUE=老师问题；OTHER=其他
+ */
+enum class RefundReasonCategory { PERSONAL, SERVICE_QUALITY, PROMISE_MISMATCH, TEACHER_ISSUE, OTHER }
+
+/** 退费业绩归因：CONSULTANT=计入顾问责任；CAMPUS=计入校区责任；NONE=非责任退费 */
+enum class RefundAttribution { CONSULTANT, CAMPUS, NONE }
 
 /** 投诉状态 */
 enum class ComplaintStatus { OPEN, RESOLVED }

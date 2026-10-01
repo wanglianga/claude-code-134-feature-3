@@ -2,6 +2,7 @@ package com.training.crm.config
 
 import com.training.crm.domain.*
 import com.training.crm.repo.*
+import com.training.crm.service.DEFAULT_TEXTBOOK
 import org.springframework.boot.CommandLineRunner
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
@@ -19,7 +20,8 @@ class DataSeeder(
     private val teacherRepo: TeacherRepo,
     private val teacherAvailabilityRepo: TeacherAvailabilityRepo,
     private val coursePackageRepo: CoursePackageRepo,
-    private val clazzRepo: ClazzRepo
+    private val clazzRepo: ClazzRepo,
+    private val materialStockRepo: MaterialStockRepo
 ) : CommandLineRunner {
 
     override fun run(vararg args: String?) {
@@ -78,5 +80,12 @@ class DataSeeder(
                 textbookVersion = "人教版数学", scheduleDesc = "每周六 10:00-12:00"
             )
         )
+
+        // 教材库存：每校区 × 每科目默认教材 20 册
+        listOf(c1.id, c2.id).forEach { campusId ->
+            DEFAULT_TEXTBOOK.values.toSet().forEach { version ->
+                materialStockRepo.save(MaterialStock(campusId = campusId, textbookVersion = version, quantity = 20))
+            }
+        }
     }
 }

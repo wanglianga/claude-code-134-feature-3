@@ -190,6 +190,9 @@ class CourseService(
         val atts = attendanceRepo.findByContractId(contractId)
         return atts.sumOf { it.consumedPaid } to atts.sumOf { it.consumedGift }
     }
+
+    fun getLesson(lessonId: Long): Lesson =
+        lessonRepo.findById(lessonId).orElseThrow { BusinessException("NOT_FOUND", "课时不存在: $lessonId") }
 }
 
 data class LessonScheduleReq(

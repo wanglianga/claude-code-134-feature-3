@@ -1,0 +1,17 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: training-crm-redis
+    ports:
+      - "6379:6379"
+
+  app:
+    build: .
+    container_name: training-crm-app
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
