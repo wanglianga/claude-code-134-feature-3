@@ -5,11 +5,12 @@ import com.training.crm.repo.*
 import org.springframework.boot.CommandLineRunner
 import org.springframework.stereotype.Component
 import java.math.BigDecimal
+import java.time.LocalDate
 import java.time.LocalTime
 
 /**
  * 启动种子数据：2 个校区、2 名顾问、3 名老师（张老师跨校区共享）、
- * 教室、老师空档、2 个课包、1 个正式班级。测试账号见 README。
+ * 教室、老师空档、2 个课包、1 个正式班级、教材库存、渠道投放质量基准。测试账号见 README。
  */
 @Component
 class DataSeeder(
@@ -19,7 +20,9 @@ class DataSeeder(
     private val teacherRepo: TeacherRepo,
     private val teacherAvailabilityRepo: TeacherAvailabilityRepo,
     private val coursePackageRepo: CoursePackageRepo,
-    private val clazzRepo: ClazzRepo
+    private val clazzRepo: ClazzRepo,
+    private val materialStockRepo: MaterialStockRepo,
+    private val channelQualityRepo: ChannelDailyQualityRepo
 ) : CommandLineRunner {
 
     override fun run(vararg args: String?) {
@@ -77,6 +80,20 @@ class DataSeeder(
                 classType = ClassType.REGULAR, teacherId = t1.id, classroomId = room.id, capacity = 4,
                 textbookVersion = "人教版数学", scheduleDesc = "每周六 10:00-12:00"
             )
+        )
+
+        // 教材库存初始余量（报名发放出库、退费交回入库）
+        materialStockRepo.save(MaterialStock(subject = Subject.MATH, textbookVersion = "人教版数学", available = 20))
+        materialStockRepo.save(MaterialStock(subject = Subject.ENGLISH, textbookVersion = "新概念青少版", available = 20))
+        materialStockRepo.save(MaterialStock(subject = Subject.PHYSICS, textbookVersion = "人教版物理", available = 20))
+
+        // 渠道投放质量基准（昨日历史数据，用于与当日实时数据对比）
+        val yesterday = LocalDate.now().minusDays(1).toString()
+        channelQualityRepo.save(
+            ChannelDailyQuality(channel = "抖音", statDate = yesterday, leads = 10, validEnrollments = 3, refunds = 0, cost = BigDecimal("3000"))
+        )
+        channelQualityRepo.save(
+            ChannelDailyQuality(channel = "官网", statDate = yesterday, leads = 5, validEnrollments = 2, refunds = 0, cost = BigDecimal("400"))
         )
     }
 }

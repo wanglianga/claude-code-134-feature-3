@@ -25,14 +25,14 @@ class WebConfig : WebMvcConfigurer {
 }
 
 class RoleInterceptor : HandlerInterceptor {
-    private val roles = setOf("ADMIN", "PRINCIPAL", "CONSULTANT", "TEACHER")
+    private val roles = setOf("ADMIN", "PRINCIPAL", "FINANCE", "CONSULTANT", "TEACHER")
 
     override fun preHandle(request: HttpServletRequest, response: HttpServletResponse, handler: Any): Boolean {
         val role = request.getHeader("X-Role")
         if (role == null || role !in roles) {
             response.status = HttpStatus.UNAUTHORIZED.value()
             response.contentType = "application/json;charset=UTF-8"
-            response.writer.write("""{"error":"UNAUTHORIZED","message":"缺少或非法的 X-Role 请求头（ADMIN/PRINCIPAL/CONSULTANT/TEACHER）"}""")
+            response.writer.write("""{"error":"UNAUTHORIZED","message":"缺少或非法的 X-Role 请求头（ADMIN/PRINCIPAL/FINANCE/CONSULTANT/TEACHER）"}""")
             return false
         }
         if (request.requestURI.startsWith("/api/principal") && role != "PRINCIPAL" && role != "ADMIN") {
@@ -49,9 +49,12 @@ class RoleInterceptor : HandlerInterceptor {
 class GlobalExceptionHandler {
 
     @ExceptionHandler(BusinessException::class)
-    fun biz(e: BusinessException): ResponseEntity<Map<String, Any>> =
-        ResponseEntity.status(HttpStatus.BAD_REQUEST)
+    fun biz(e: BusinessException): ResponseEntity<Map<String, Any>> {
+        // FORBIDDEN 业务码返回 403，其余业务异常返回 400
+        val status = if (e.code == "FORBIDDEN") HttpStatus.FORBIDDEN else HttpStatus.BAD_REQUEST
+        return ResponseEntity.status(status)
             .body(mapOf("error" to e.code, "message" to e.message))
+    }
 
     @ExceptionHandler(MethodArgumentNotValidException::class)
     fun invalid(e: Exception): ResponseEntity<Map<String, Any>> =

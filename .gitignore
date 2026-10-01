@@ -35,3 +35,8 @@ temp/
 *debug*
 *temp*
 *tmp*
+.local/*.tar
+.local/*.tar.gz
+.local/*.tgz
+.local/*.zip
+.local/*.7z

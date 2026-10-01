@@ -62,6 +62,12 @@ class Contract(
     var giftLessons: Int = 0,
     var materialFee: BigDecimal = BigDecimal.ZERO,
     var materialsDelivered: Boolean = false,
+    /** 分期手续费率（合同签署时确定，退费试算/审批用其核算已承担手续费） */
+    var installmentFeeRate: BigDecimal = BigDecimal.ZERO,
+    /** 报名时已收取的分期手续费合计 */
+    var installmentFeeCharged: BigDecimal = BigDecimal.ZERO,
+    /** 合同签署时间（退费账龄=申请时间-signedAt，判断是否报名两周后） */
+    var signedAt: LocalDateTime = LocalDateTime.now(),
     @Enumerated(EnumType.STRING)
     var consumeOrder: ConsumeOrder = ConsumeOrder.PAID_FIRST,
     /** 报名时一致性校验告警（试听反馈 vs 合同承诺），JSON 数组文本 */
@@ -79,7 +85,10 @@ class Installment(
     var id: Long = 0,
     var contractId: Long = 0,
     var seq: Int = 1,
+    /** 本期本金（不含手续费） */
     var amount: BigDecimal = BigDecimal.ZERO,
+    /** 本期分摊的分期手续费；退费不退已承担手续费 */
+    var fee: BigDecimal = BigDecimal.ZERO,
     var dueDate: LocalDate = LocalDate.now(),
     var paidAt: LocalDateTime? = null,
     @Enumerated(EnumType.STRING)
@@ -110,5 +119,9 @@ class Commission(
     var amount: BigDecimal = BigDecimal.ZERO,
     @Enumerated(EnumType.STRING)
     var status: CommissionStatus = CommissionStatus.ACCRUED,
+    /** 重归因后实际结算金额（SETTLED_PARTIAL 时小于 amount） */
+    var settledAmount: BigDecimal = BigDecimal.ZERO,
+    /** 重归因原因（退费原因码） */
+    var attributionReason: String? = null,
     var updatedAt: LocalDateTime = LocalDateTime.now()
 )

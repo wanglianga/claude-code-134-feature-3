@@ -27,6 +27,13 @@ class Lead(
     var joinedActivity: Boolean = false,
     @Enumerated(EnumType.STRING)
     var status: LeadStatus = LeadStatus.NEW,
+    /**
+     * 有效报名标记：转化为正式学员时置 true；该报名退费完成后置 false（渠道质量核销），
+     * 防止同一线索退费后仍被重复算作有效报名。
+     */
+    var validEnrollment: Boolean = false,
+    /** 报名已退费（用于同手机号重复线索风险判断） */
+    var enrollmentRefunded: Boolean = false,
     var remark: String? = null,
     var createdAt: LocalDateTime = LocalDateTime.now()
 )

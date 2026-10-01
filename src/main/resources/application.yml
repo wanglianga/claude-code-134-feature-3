@@ -26,10 +26,20 @@ spring:
     serialization:
       write-dates-as-timestamps: false
 
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: alpha
+    tags-sorter: alpha
+
 app:
   commission-rate: 0.05          # 顾问提成比例
   complaint-compensation: 200    # 每条未结投诉在退费时的赔付金额
   absent-consumes-lesson: true   # 缺席是否照常扣课时
+  installment-fee-rate: 0.02     # 分期手续费率（分期数>1时按期本金计收；报名满14天后退费，已承担手续费不退）
+  refund-cooling-days: 14        # 退费冷静期天数：期内申请免收分期手续费（场景：家长报名两周后申请退费）
 
 logging:
   level:

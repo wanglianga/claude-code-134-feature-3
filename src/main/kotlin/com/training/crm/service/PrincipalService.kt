@@ -25,7 +25,8 @@ class PrincipalService(
     private val enrollmentRepo: EnrollmentRepo,
     private val clazzRepo: ClazzRepo,
     private val campusRepo: CampusRepo,
-    private val consultantRepo: ConsultantRepo
+    private val consultantRepo: ConsultantRepo,
+    private val channelQualityService: ChannelQualityService
 ) {
 
     /**
@@ -50,9 +51,13 @@ class PrincipalService(
                 "consumedPaid" to atts.sumOf { it.consumedPaid },
                 "consumedGift" to atts.sumOf { it.consumedGift },
                 "received" to installments.filter { it.status == InstallmentStatus.PAID }.fold(BigDecimal.ZERO) { a, i -> a.add(i.amount) },
-                "installments" to installments.map { mapOf("seq" to it.seq, "amount" to it.amount, "status" to it.status, "dueDate" to it.dueDate) },
+                "installments" to installments.map {
+                    mapOf("seq" to it.seq, "amount" to it.amount, "fee" to it.fee, "status" to it.status, "dueDate" to it.dueDate)
+                },
                 "invoices" to invoiceRepo.findByContractId(c.id).map { mapOf("amount" to it.amount, "title" to it.title, "status" to it.status) },
-                "commissions" to commissionRepo.findByContractId(c.id).map { mapOf("amount" to it.amount, "status" to it.status) },
+                "commissions" to commissionRepo.findByContractId(c.id).map {
+                    mapOf("amount" to it.amount, "status" to it.status, "settledAmount" to it.settledAmount, "attributionReason" to it.attributionReason)
+                },
                 "consistencyWarnings" to c.consistencyWarnings
             )
         }
@@ -101,7 +106,9 @@ class PrincipalService(
                 "converted" to leads.count { it.consultantId == c.id && it.status == LeadStatus.CONVERTED },
                 "commissionAccrued" to commissions.filter { it.status == CommissionStatus.ACCRUED }.fold(BigDecimal.ZERO) { a, x -> a.add(x.amount) },
                 "commissionFrozen" to commissions.filter { it.status == CommissionStatus.FROZEN }.fold(BigDecimal.ZERO) { a, x -> a.add(x.amount) },
-                "commissionClawedBack" to commissions.filter { it.status == CommissionStatus.CLAWED_BACK }.fold(BigDecimal.ZERO) { a, x -> a.add(x.amount) }
+                "commissionClawedBack" to commissions.filter { it.status == CommissionStatus.CLAWED_BACK }.fold(BigDecimal.ZERO) { a, x -> a.add(x.amount) },
+                "commissionSettledPartial" to commissions.filter { it.status == CommissionStatus.SETTLED_PARTIAL }.fold(BigDecimal.ZERO) { a, x -> a.add(x.settledAmount) },
+                "commissionSettled" to commissions.filter { it.status == CommissionStatus.SETTLED }.fold(BigDecimal.ZERO) { a, x -> a.add(x.amount) }
             )
         }
         return mapOf(
@@ -109,7 +116,11 @@ class PrincipalService(
             "consultants" to perConsultant,
             "channelCosts" to leads.flatMap { channelFeeRepo.findByLeadId(it.id) }
                 .groupBy { it.channel }
-                .mapValues { entry -> entry.value.fold(BigDecimal.ZERO) { a, f -> a.add(f.amount) } }
+                .mapValues { entry -> entry.value.fold(BigDecimal.ZERO) { a, f -> a.add(f.amount) } },
+            "channelQuality" to channelQualityService.summary()
         )
     }
+
+    /** 渠道投放质量明细 */
+    fun channelQuality(): List<Map<String, Any?>> = channelQualityService.summary()
 }

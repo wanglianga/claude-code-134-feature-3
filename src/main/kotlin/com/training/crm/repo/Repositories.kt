@@ -16,6 +16,7 @@ interface TeacherAvailabilityRepo : JpaRepository<TeacherAvailability, Long> {
 
 interface LeadRepo : JpaRepository<Lead, Long> {
     fun findByConsultantId(consultantId: Long): List<Lead>
+    fun findByParentPhone(parentPhone: String): List<Lead>
 }
 interface PromiseRecordRepo : JpaRepository<PromiseRecord, Long> {
     fun findByLeadId(leadId: Long): List<PromiseRecord>
@@ -95,6 +96,18 @@ interface ComplaintRepo : JpaRepository<Complaint, Long> {
 interface RefundOrderRepo : JpaRepository<RefundOrder, Long> {
     fun findByStudentId(studentId: Long): List<RefundOrder>
     fun findByContractIdAndStatusIn(contractId: Long, statuses: List<RefundStatus>): List<RefundOrder>
+}
+
+interface MaterialStockRepo : JpaRepository<MaterialStock, Long> {
+    fun findBySubjectAndTextbookVersion(subject: Subject, textbookVersion: String): MaterialStock?
+}
+interface MaterialMovementRepo : JpaRepository<MaterialMovement, Long> {
+    fun findByContractId(contractId: Long): List<MaterialMovement>
+    fun findByRefundOrderId(refundOrderId: Long): List<MaterialMovement>
+}
+interface ChannelDailyQualityRepo : JpaRepository<ChannelDailyQuality, Long> {
+    fun findByChannel(channel: String): List<ChannelDailyQuality>
+    fun findByChannelAndStatDate(channel: String, statDate: String): ChannelDailyQuality?
 }
 interface AuditEventRepo : JpaRepository<AuditEvent, Long> {
     fun findByStudentIdOrLeadIdOrderByCreatedAtAsc(studentId: Long, leadId: Long): List<AuditEvent>

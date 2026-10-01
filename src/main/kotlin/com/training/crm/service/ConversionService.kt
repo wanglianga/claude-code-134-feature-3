@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.math.BigDecimal
+import java.math.RoundingMode
 import java.time.LocalDate
 
 @Service
@@ -25,8 +26,11 @@ class ConversionService(
     private val trialFeedbackRepo: TrialFeedbackRepo,
     private val promiseRecordRepo: PromiseRecordRepo,
     private val channelFeeRepo: ChannelFeeRepo,
+    private val inventoryService: InventoryService,
+    private val channelQualityService: ChannelQualityService,
     private val auditService: AuditService,
-    @Value("\${app.commission-rate}") private val commissionRate: BigDecimal
+    @Value("\${app.commission-rate}") private val commissionRate: BigDecimal,
+    @Value("\${app.installment-fee-rate}") private val defaultInstallmentFeeRate: BigDecimal
 ) {
     private val mapper = jacksonObjectMapper()
 
@@ -50,6 +54,11 @@ class ConversionService(
         if (lead.status != LeadStatus.TRIAL_DONE) {
             bizFail("INVALID_STATE", "线索状态(${lead.status})不能报名：需先完成试听并由老师提交反馈")
         }
+        // 防止同一线索（家长手机号）在已有有效报名时重复报名
+        val duplicate = leadRepo.findByParentPhone(lead.parentPhone).any {
+            it.id != lead.id && it.status == LeadStatus.CONVERTED && it.validEnrollment
+        }
+        if (duplicate) bizFail("DUPLICATE_ENROLLMENT", "该家长手机号已有有效报名，不能重复转化（报名退费后核销可重新报名）")
         val pkg = coursePackageRepo.findById(req.coursePackageId)
             .orElseThrow { BusinessException("NOT_FOUND", "课包不存在: ${req.coursePackageId}") }
 
@@ -64,6 +73,7 @@ class ConversionService(
         val finalAmount = pkg.price.subtract(req.discountAmount)
         if (finalAmount < BigDecimal.ZERO) bizFail("INVALID_AMOUNT", "优惠金额不能超过课包价格")
         val giftLessons = pkg.defaultGiftLessons + req.extraGiftLessons
+        val signedAt = req.signedAt ?: java.time.LocalDateTime.now()
         val contract = contractRepo.save(
             Contract(
                 studentId = student.id,
@@ -78,23 +88,38 @@ class ConversionService(
                 materialFee = pkg.materialFee,
                 materialsDelivered = req.materialsDelivered,
                 consumeOrder = req.consumeOrder,
+                installmentFeeRate = req.installmentFeeRate ?: defaultInstallmentFeeRate,
+                signedAt = signedAt,
                 consistencyWarnings = if (warnings.isEmpty()) null else mapper.writeValueAsString(warnings)
             )
         )
 
-        // ---- 分期 ----
+        // ---- 分期（分期数>1 时按期本金计收手续费）----
         val plan = req.installments.ifEmpty { listOf(InstallmentPlan(finalAmount, LocalDate.now())) }
         val planSum = plan.fold(BigDecimal.ZERO) { acc, p -> acc.add(p.amount) }
         if (planSum.compareTo(finalAmount) != 0) {
             bizFail("INVALID_INSTALLMENT", "分期总额($planSum)必须等于实付金额($finalAmount)")
         }
+        val feeRate = contract.installmentFeeRate
+        val withFee = plan.size > 1
         val installments = plan.mapIndexed { i, p ->
-            installmentRepo.save(Installment(contractId = contract.id, seq = i + 1, amount = p.amount, dueDate = p.dueDate))
+            val fee = if (withFee) p.amount.multiply(feeRate).setScale(2, RoundingMode.HALF_UP) else BigDecimal.ZERO
+            installmentRepo.save(
+                Installment(contractId = contract.id, seq = i + 1, amount = p.amount, fee = fee, dueDate = p.dueDate)
+            )
         }
+        val feeTotal = installments.fold(BigDecimal.ZERO) { acc, ins -> acc.add(ins.fee) }
+        contract.installmentFeeCharged = feeTotal
+        contractRepo.save(contract)
 
         // ---- 发票 ----
         val invoice = req.invoiceTitle?.let {
             invoiceRepo.save(Invoice(contractId = contract.id, amount = finalAmount, title = it, taxNo = req.invoiceTaxNo))
+        }
+
+        // ---- 教材发放出库 ----
+        if (req.materialsDelivered) {
+            inventoryService.issue(pkg.subject, pkg.textbookVersion, contract.id, student.id)
         }
 
         // ---- 顾问提成 ----
@@ -109,11 +134,13 @@ class ConversionService(
             )
         }
 
-        // ---- 渠道费结算 ----
+        // ---- 渠道费结算 + 有效报名计入渠道投放质量 ----
         channelFeeRepo.findByLeadId(lead.id).forEach { it.settled = true; channelFeeRepo.save(it) }
+        lead.validEnrollment = true
 
         lead.status = LeadStatus.CONVERTED
         leadRepo.save(lead)
+        channelQualityService.recordValidEnrollment(lead.sourceChannel)
 
         auditService.record("CONVERTED", "线索转化为正式学员（学员ID=${student.id}）", studentId = student.id, leadId = lead.id, actor = actor)
         auditService.record(
@@ -121,11 +148,19 @@ class ConversionService(
             "合同#${contract.id}：课包=${pkg.name}，原价=${pkg.price}，优惠=${req.discountAmount}，实付=$finalAmount，付费课时=${pkg.totalLessons}，赠课=$giftLessons，教材费=${pkg.materialFee}，课消顺序=${req.consumeOrder}",
             studentId = student.id, leadId = lead.id, actor = actor
         )
-        auditService.record("INSTALLMENT_PLAN", "分期${installments.size}期：${installments.joinToString { "第${it.seq}期¥${it.amount}(${it.dueDate})" }}", studentId = student.id, leadId = lead.id, actor = actor)
+        auditService.record(
+            "INSTALLMENT_PLAN",
+            "分期${installments.size}期（手续费率=$feeRate）：${installments.joinToString { "第${it.seq}期本金¥${it.amount}+手续费¥${it.fee}(${it.dueDate})" }}，手续费合计 ¥$feeTotal",
+            studentId = student.id, leadId = lead.id, actor = actor
+        )
+        if (req.materialsDelivered) {
+            auditService.record("MATERIAL_ISSUED", "教材发放出库：${pkg.textbookVersion} ×1", studentId = student.id, leadId = lead.id, actor = actor)
+        }
         if (invoice != null) auditService.record("INVOICE_ISSUED", "发票开具：¥${invoice.amount}，抬头=${invoice.title}", studentId = student.id, leadId = lead.id, actor = actor)
         auditService.record("COMMISSION_ACCRUED", "顾问提成计提：¥${commission.amount}（顾问=${lead.consultantId}）", studentId = student.id, leadId = lead.id, actor = actor)
         req.promises.forEach { auditService.record("PROMISE_RECORDED", "合同承诺：$it", studentId = student.id, leadId = lead.id, actor = actor) }
         warnings.forEach { auditService.record("CONSISTENCY_WARNING", "一致性告警：$it", studentId = student.id, leadId = lead.id, actor = actor) }
+        auditService.record("CHANNEL_VALID_ENROLLMENT", "渠道[${lead.sourceChannel}]有效报名+1", studentId = student.id, leadId = lead.id, actor = actor)
 
         return ConvertResult(student, contract, installments, invoice, commission, warnings)
     }
@@ -163,7 +198,11 @@ class ConversionService(
         inst.status = InstallmentStatus.PAID
         inst.paidAt = java.time.LocalDateTime.now()
         val contract = contractRepo.findById(inst.contractId).get()
-        auditService.record("INSTALLMENT_PAID", "第${inst.seq}期回款 ¥${inst.amount}（合同#${inst.contractId}）", studentId = contract.studentId, actor = actor)
+        auditService.record(
+            "INSTALLMENT_PAID",
+            "第${inst.seq}期回款 本金¥${inst.amount}+手续费¥${inst.fee}（合同#${inst.contractId}）",
+            studentId = contract.studentId, actor = actor
+        )
         return installmentRepo.save(inst)
     }
 }
@@ -179,6 +218,10 @@ data class ConvertReq(
     val promises: List<String> = emptyList(),
     val materialsDelivered: Boolean = true,
     val consumeOrder: ConsumeOrder = ConsumeOrder.PAID_FIRST,
+    /** 分期手续费率，缺省取 app.installment-fee-rate（分期数>1 时生效） */
+    val installmentFeeRate: BigDecimal? = null,
+    /** 合同签署时间，缺省为当前时间（用于补录报名两周后退费场景的账龄） */
+    val signedAt: java.time.LocalDateTime? = null,
     val forceConfirm: Boolean = false
 )
 

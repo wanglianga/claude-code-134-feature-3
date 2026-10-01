@@ -27,6 +27,7 @@ class LeadService(
     private val channelFeeRepo: ChannelFeeRepo,
     private val promiseRecordRepo: PromiseRecordRepo,
     private val giftRecordRepo: GiftRecordRepo,
+    private val channelQualityService: ChannelQualityService,
     private val lockService: LockService,
     private val auditService: AuditService
 ) {
@@ -59,12 +60,23 @@ class LeadService(
             // 渠道费用登记
             val cost = CHANNEL_COSTS[req.sourceChannel] ?: BigDecimal("100")
             channelFeeRepo.save(ChannelFee(channel = req.sourceChannel, leadId = lead.id, amount = cost))
+            // 渠道投放质量：线索 +1
+            channelQualityService.recordLead(req.sourceChannel, cost)
+            // 同手机号已有有效报名 → 重复线索风险（允许登记，但不得再次计为有效报名，转化环节会拦截）
+            val activeSamePhone = leadRepo.findByParentPhone(req.parentPhone).any { it.status == LeadStatus.CONVERTED && it.validEnrollment }
             auditService.record(
                 "LEAD_CREATED",
                 "新线索：${lead.studentName}（${lead.grade}，${lead.subject}，基础=${lead.baseLevel}，可上课=${lead.availableTime}，渠道=${lead.sourceChannel}，已参加活动=${lead.joinedActivity}）",
                 leadId = lead.id, actor = actor
             )
             auditService.record("CHANNEL_FEE", "渠道费用登记：${lead.sourceChannel} ¥$cost", leadId = lead.id, actor = actor)
+            if (activeSamePhone) {
+                auditService.record(
+                    "DUPLICATE_LEAD_RISK",
+                    "家长手机号 ${req.parentPhone} 已有有效报名，该线索标记为重复风险，转化时拦截，避免同一客户被重复算作有效报名",
+                    leadId = lead.id, actor = actor
+                )
+            }
             return lead
         }
 
